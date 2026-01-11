@@ -1,160 +1,116 @@
-from http.server import BaseHTTPRequestHandler
-import json
+"""
+极简版本：AI实验报告评价API（Vercel Serverless Function版本）
+这个版本不处理复杂的AI逻辑，只作为桥梁调用外部AI服务。
+"""
 import os
-import sys
-from urllib.parse import parse_qs
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.ai_evaluator import evaluate_experiment_report
+import json
+from http.server import BaseHTTPRequestHandler
+import urllib.request
 
-# 允许的请求来源（CORS配置）
-ALLOWED_ORIGINS = [
-    "http://localhost",
-    "http://127.0.0.1:5500",  # 本地Live Server常用端口
-    "http://localhost:5500",
-    "https://你的前端域名.vercel.app"  # 后续替换为你的实际前端域名
-]
+# 配置：使用环境变量中的DeepSeek API密钥，如果未设置则使用模拟模式
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "mock_mode")
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
+def handler(event, context):
+    """Vercel Serverless Function 主处理函数"""
+    # 1. 解析请求
+    try:
+        # Vercel 会将请求体作为 event 的 'body' 字段传入
+        body = json.loads(event.get('body', '{}'))
+        report_data = body.get('report_data', {})
+    except json.JSONDecodeError:
+        return {
+            'statusCode': 400,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({'success': False, 'message': '无效的JSON请求体'})
+        }
+
+    # 2. 根据模式进行处理
+    if DEEPSEEK_API_KEY == "mock_mode":
+        # 模拟模式：返回固定的示例数据
+        return mock_evaluation(report_data)
+    else:
+        # 真实模式：转发请求到DeepSeek API
+        return call_deepseek_api(report_data)
+
+def mock_evaluation(report_data):
+    """生成模拟评价数据"""
+    experiment_name = report_data.get('experiment_name', '未知实验').lower()
+    
+    # 根据实验名称返回不同的模拟数据
+    if '单摆' in experiment_name or '重力' in experiment_name:
+        score = 88
+        feedback = "实验步骤清晰，数据记录完整，但误差分析可更深入。"
+    elif '电路' in experiment_name or '谐振' in experiment_name:
+        score = 92
+        feedback = "谐振曲线测量精确，图表规范，分析透彻。"
+    elif '化学' in experiment_name or '合成' in experiment_name:
+        score = 76
+        feedback = "原理描述正确，但产率计算和产物表征部分需要完善。"
+    else:
+        score = 85
+        feedback = "报告结构完整，符合基本规范，有提升空间。"
+
+    result = {
+        'success': True,
+        'data': {
+            'comprehensive_score': score,
+            'dimension_scores': {'format': score+2, 'data': score, 'logic': score-3, 'analysis': score-5},
+            'strengths': ['报告格式规范', '实验目的明确'],
+            'weaknesses': ['数据分析深度可加强', '结论部分略显简略'],
+            'specific_suggestions': [feedback, '建议补充更多参考文献'],
+            'evaluation_rationale': '基于实验报告的基本要素进行评价。',
+            'is_mock': True
+        },
+        'message': 'AI评价完成（模拟模式）'
+    }
+    
+    return {
+        'statusCode': 200,
+        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+        'body': json.dumps(result, ensure_ascii=False)
+    }
+
+def call_deepseek_api(report_data):
+    """调用真实的DeepSeek API（如果你有真实的API密钥）"""
+    # 这里是调用真实API的逻辑，因为你目前是mock_mode，我们先不实现
+    # 当你有真实API密钥后，可以在这里添加代码
+    return mock_evaluation(report_data)
+
+# 为了兼容性，保留旧的类定义（Vercel的某些环境可能需要）
 class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        """处理预检请求"""
-        self.handle_cors()
         self.send_response(200)
-        self.send_cors_headers()
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
     
     def do_POST(self):
-        """处理提交报告的评价请求"""
-        try:
-            self.handle_cors()
-            
-            # 1. 获取请求数据
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            
-            # 支持表单数据和JSON数据
-            if self.headers.get('Content-Type', '').startswith('application/json'):
-                data = json.loads(post_data)
-            else:
-                # 如果是表单数据，这里需要更复杂的解析
-                # 为简化，我们先支持JSON
-                data = json.loads(post_data)
-            
-            # 2. 调用AI评价引擎
-            print(f"收到评价请求，实验名称: {data.get('experiment_name', '未知')}")
-            ai_result = evaluate_experiment_report(data)
-            
-            # 3. 返回成功响应
-            response = {
-                "success": True,
-                "message": "AI评价完成",
-                "data": ai_result,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            self.send_response(200)
-            self.send_cors_headers()
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
-            
-        except json.JSONDecodeError as e:
-            self.send_error_response(400, f"JSON解析错误: {str(e)}")
-        except KeyError as e:
-            self.send_error_response(400, f"缺少必要字段: {str(e)}")
-        except Exception as e:
-            print(f"服务器内部错误: {str(e)}")
-            self.send_error_response(500, f"服务器内部错误: {str(e)}")
-    
-    def send_error_response(self, code, message):
-        """发送错误响应"""
-        response = {
-            "success": False,
-            "message": message,
-            "timestamp": datetime.now().isoformat()
-        }
-        self.send_response(code)
-        self.send_cors_headers()
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        
+        # 模拟Vercel的事件格式
+        event = {'body': post_data.decode('utf-8')}
+        response = handler(event, {})
+        
+        self.send_response(response['statusCode'])
+        for key, value in response['headers'].items():
+            self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
-    
-    def handle_cors(self):
-        """处理CORS"""
-        origin = self.headers.get('Origin', '')
-        if origin in ALLOWED_ORIGINS or origin.endswith('.vercel.app'):
-            self.send_header('Access-Control-Allow-Origin', origin)
-    
-    def send_cors_headers(self):
-        """发送CORS头部"""
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        self.send_header('Access-Control-Allow-Credentials', 'true')
-        self.send_header('Access-Control-Max-Age', '86400')
+        self.wfile.write(response['body'].encode('utf-8') if isinstance(response['body'], str) else response['body'])
 
-def handler(request, context):
-    """Vercel Serverless函数入口（适配Vercel）"""
-    from io import StringIO
-    import sys
-    
-    class VercelHandler(Handler):
-        def __init__(self, request):
-            self.request = request
-            self.headers = request['headers']
-            self.path = request['path']
-            self.method = request['method']
-            self.body = request.get('body', '')
-            self.status_code = 200
-            self.response_headers = {}
-        
-        def send_response(self, code):
-            self.status_code = code
-        
-        def send_header(self, key, value):
-            self.response_headers[key] = value
-        
-        def end_headers(self):
-            pass
-        
-        def do_GET(self):
-            # 处理GET请求（示例）
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            response = {"status": "API is running"}
-            self.response_body = json.dumps(response)
-        
-        def do_POST(self):
-            # 调用父类的POST处理
-            self.headers = {k.lower(): v for k, v in self.headers.items()}
-            super().do_POST()
-    
-    # 创建处理器并处理请求
-    handler_instance = VercelHandler(request)
-    
-    if request['method'] == 'GET':
-        handler_instance.do_GET()
-    elif request['method'] == 'POST':
-        handler_instance.do_POST()
-    elif request['method'] == 'OPTIONS':
-        handler_instance.do_OPTIONS()
-    
-    return {
-        'statusCode': handler_instance.status_code,
-        'headers': handler_instance.response_headers,
-        'body': getattr(handler_instance, 'response_body', '{}')
-    }
-
-# 为本地测试保留
+# 本地测试用
 if __name__ == "__main__":
-    from datetime import datetime
-    import sys
-    
-    class TestHandler(Handler):
-        def __init__(self):
-            pass
-        
-        def log_message(self, format, *args):
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}")
-    
-    print("本地测试服务器启动中...")
-    # 这里可以添加本地测试代码
+    # 本地测试代码
+    test_event = {
+        'body': json.dumps({
+            'report_data': {
+                'experiment_name': '单摆测重力加速度',
+                'purpose': '测试目的',
+                'procedure': '测试步骤'
+            }
+        })
+    }
+    result = handler(test_event, {})
+    print(json.dumps(json.loads(result['body']), indent=2, ensure_ascii=False))
