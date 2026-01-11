@@ -1,0 +1,11 @@
+{
+  "name": "ai-lab-report-backend",
+  "version": "1.0.0",
+  "description": "Wrapper for Python API on Vercel",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "echo 'Python API is running via Vercel Functions'"
+  }
+}
